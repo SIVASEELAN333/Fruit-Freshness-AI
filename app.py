@@ -6,22 +6,33 @@ import cv2
 import pandas as pd
 from datetime import datetime
 from matplotlib import cm
+import os
+import requests
 
-# ---------------- Page config ----------------
+# ---------------- Page Config ----------------
 st.set_page_config(
     page_title="Freshness Detection AI",
     page_icon="🍎",
     layout="wide"
 )
 
-# ---------------- Load model ----------------
+# ---------------- Model Download ----------------
+MODEL_URL = "https://github.com/SIVASEELAN333/Fruit-Freshness-AI/releases/download/v1.0/fruit_rotten_model.h5"
+MODEL_PATH = "fruit_rotten_model.h5"
+
 @st.cache_resource
 def load_model():
-    return tf.keras.models.load_model("fruit_rotten_model.h5")
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("📥 Downloading AI model (first-time setup)..."):
+            response = requests.get(MODEL_URL)
+            response.raise_for_status()
+            with open(MODEL_PATH, "wb") as f:
+                f.write(response.content)
+    return tf.keras.models.load_model(MODEL_PATH)
 
 model = load_model()
 
-# ---------------- Session state ----------------
+# ---------------- Session State ----------------
 if "history" not in st.session_state:
     st.session_state.history = []
 
@@ -30,7 +41,7 @@ st.markdown(
     """
     <h1 style="text-align:center;">🍎 AI-Based Fruit & Vegetable Freshness Detection</h1>
     <p style="text-align:center; color:#6c757d;">
-    Explainable AI system with risk analysis, image quality validation, shelf-life estimation & batch inspection
+    Explainable AI system with risk analysis, shelf-life estimation & batch inspection
     </p>
     """,
     unsafe_allow_html=True
@@ -50,7 +61,7 @@ with st.sidebar:
         accept_multiple_files=True
     )
 
-# ---------------- Helper functions ----------------
+# ---------------- Helper Functions ----------------
 def estimate_shelf_life(rotten_prob):
     if rotten_prob < 30:
         return "5–7 days"
@@ -65,13 +76,12 @@ def image_quality_metrics(img):
     brightness = gray.mean()
     noise = np.std(gray)
 
-    if brightness < 40 or brightness > 210:
+    if blur < 50 or brightness < 40 or brightness > 210:
         return "Low"
-    if blur < 60:
-        return "Low"
-    if noise > 25:
+    elif blur < 120 or noise > 25:
         return "Moderate"
-    return "Good"
+    else:
+        return "Good"
 
 def get_last_conv_layer(model):
     for layer in reversed(model.layers):
@@ -94,8 +104,8 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer):
 
     conv_output = conv_output[0]
     heatmap = tf.reduce_sum(conv_output * pooled_grads, axis=-1)
-
     heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+
     return heatmap.numpy()
 
 def overlay_heatmap(heatmap, image, alpha=0.4):
@@ -105,7 +115,7 @@ def overlay_heatmap(heatmap, image, alpha=0.4):
     heatmap = np.uint8(heatmap * 255)
     return cv2.addWeighted(image, 1 - alpha, heatmap, alpha, 0)
 
-# ---------------- Main pipeline ----------------
+# ---------------- Main Pipeline ----------------
 if uploaded_files:
 
     st.markdown("## 📊 Inspection Summary")
@@ -117,9 +127,9 @@ if uploaded_files:
 
     for f in uploaded_files:
         img = np.array(Image.open(f).convert("RGB"))
-        img_proc = cv2.resize(img, (224, 224)) / 255.0
-        img_proc = np.expand_dims(img_proc, axis=0)
-        prob = float(model.predict(img_proc, verbose=0)[0][0]) * 100
+        x = cv2.resize(img, (224, 224)) / 255.0
+        x = np.expand_dims(x, axis=0)
+        prob = float(model.predict(x, verbose=0)[0][0]) * 100
 
         if prob >= 50:
             rotten_count += 1
@@ -129,7 +139,7 @@ if uploaded_files:
             high_risk += 1
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("📦 Total Inspected", total)
+    c1.metric("📦 Total", total)
     c2.metric("🍏 Fresh", fresh_count)
     c3.metric("🧪 Rotten", rotten_count)
     c4.metric("⚠️ High Risk", high_risk)
@@ -142,7 +152,6 @@ if uploaded_files:
         st.markdown("## 🖼️ Image Analysis")
 
         col1, col2 = st.columns(2)
-
         image = Image.open(uploaded_file).convert("RGB")
         img = np.array(image)
 
@@ -156,18 +165,17 @@ if uploaded_files:
             st.image(img, caption="Processed Image", use_container_width=True)
 
         quality = image_quality_metrics(img)
-
         if quality == "Good":
             st.success("📸 Image Quality: Good")
         elif quality == "Moderate":
             st.warning("📸 Image Quality: Moderate")
         else:
-            st.error("📸 Image Quality: Low – consider re-uploading")
+            st.error("📸 Image Quality: Low – re-upload recommended")
 
-        img_resized = cv2.resize(img, (224, 224)) / 255.0
-        img_resized = np.expand_dims(img_resized, axis=0)
+        x = cv2.resize(img, (224, 224)) / 255.0
+        x = np.expand_dims(x, axis=0)
 
-        pred = model.predict(img_resized, verbose=0)
+        pred = model.predict(x, verbose=0)
         rotten_prob = float(pred[0][0]) * 100
         fresh_prob = 100 - rotten_prob
 
@@ -175,17 +183,15 @@ if uploaded_files:
 
         with col3:
             if rotten_prob > fresh_prob:
-                label = "Rotten"
                 confidence = rotten_prob
                 st.error(f"🧪 Rotten\n\n{confidence:.2f}%")
             else:
-                label = "Fresh"
                 confidence = fresh_prob
                 st.success(f"🍏 Fresh\n\n{confidence:.2f}%")
 
         with col4:
-            st.metric("Fresh Probability", f"{fresh_prob:.2f}%")
-            st.metric("Rotten Probability", f"{rotten_prob:.2f}%")
+            st.metric("Fresh %", f"{fresh_prob:.2f}")
+            st.metric("Rotten %", f"{rotten_prob:.2f}")
 
         with col5:
             st.progress(confidence / 100)
@@ -194,20 +200,20 @@ if uploaded_files:
 
         if show_gradcam:
             last_conv = get_last_conv_layer(model)
-            heatmap = make_gradcam_heatmap(img_resized, model, last_conv)
+            heatmap = make_gradcam_heatmap(x, model, last_conv)
             gradcam_img = overlay_heatmap(heatmap, img)
             st.subheader("🧠 Explainable AI (Grad-CAM)")
             st.image(gradcam_img, use_container_width=True)
 
         if rotten_prob >= 70:
             risk = "High"
-            st.error("High Risk ⚠️ | Reject for Sale")
+            st.error("High Risk ⚠️ | Reject")
         elif rotten_prob >= 40:
             risk = "Medium"
-            st.warning("Medium Risk ⚠️ | Monitor Closely")
+            st.warning("Medium Risk ⚠️ | Monitor")
         else:
             risk = "Low"
-            st.success("Low Risk ✅ | Safe for Sale")
+            st.success("Low Risk ✅ | Safe")
 
         record = {
             "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -239,7 +245,6 @@ if st.session_state.history:
     with col6:
         csv = history_df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download History", csv, "inspection_history.csv")
-
     with col7:
         if st.button("🗑 Clear History"):
             st.session_state.history = []
