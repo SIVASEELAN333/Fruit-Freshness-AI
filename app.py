@@ -89,22 +89,26 @@ def get_last_conv_layer(model):
             return layer.name
     raise ValueError("No convolution layer found")
 
+# ✅ FIXED GRAD-CAM (CLOUD SAFE)
 def make_gradcam_heatmap(img_array, model, last_conv_layer):
     grad_model = tf.keras.models.Model(
-        [model.inputs],
-        [model.get_layer(last_conv_layer).output, model.output]
+        inputs=model.inputs,
+        outputs=[model.get_layer(last_conv_layer).output, model.output]
     )
 
     with tf.GradientTape() as tape:
-        conv_output, prediction = grad_model(img_array)
-        loss = prediction[:, 0]
+        conv_outputs, predictions = grad_model(img_array)
+        loss = predictions[:, 0] if len(predictions.shape) == 2 else predictions
 
-    grads = tape.gradient(loss, conv_output)
+    grads = tape.gradient(loss, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
-    conv_output = conv_output[0]
-    heatmap = tf.reduce_sum(conv_output * pooled_grads, axis=-1)
-    heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+    conv_outputs = conv_outputs[0]
+    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+
+    heatmap = tf.maximum(heatmap, 0)
+    heatmap /= tf.reduce_max(heatmap) + 1e-8
 
     return heatmap.numpy()
 
