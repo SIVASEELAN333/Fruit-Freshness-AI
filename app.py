@@ -8,7 +8,6 @@ from datetime import datetime
 from matplotlib import cm
 import os
 import requests
-from ultralytics import YOLO
 import matplotlib.pyplot as plt
 
 
@@ -99,14 +98,6 @@ def load_model():
 model = load_model()
 
 
-# ================= YOLO =================
-@st.cache_resource
-def load_yolo():
-    return YOLO("yolov8n.pt")
-
-yolo_model = load_yolo()
-
-
 # ================= SESSION =================
 if "history" not in st.session_state:
     st.session_state.history = []
@@ -122,7 +113,6 @@ st.markdown("<hr>", unsafe_allow_html=True)
 with st.sidebar:
     st.header("⚙ Inspection Controls")
     use_gaussian = st.toggle("Noise Reduction (Gaussian)")
-    use_yolo = st.toggle("YOLO Object Detection")
     show_gradcam = st.toggle("Explainable AI (Grad-CAM)")
     show_dashboard = st.toggle("📊 Visual Analytics Dashboard")
     st.markdown("---")
@@ -167,13 +157,6 @@ def overlay_heatmap(hm, img):
     hm = np.uint8(hm * 255)
     return cv2.addWeighted(img, 0.6, hm, 0.4, 0)
 
-def draw_yolo(img):
-    out = img.copy()
-    for r in yolo_model(img):
-        for b in r.boxes:
-            x1, y1, x2, y2 = map(int, b.xyxy[0])
-            cv2.rectangle(out, (x1, y1), (x2, y2), (34,197,94), 2)
-    return out
 
 def resize_for_display(img, max_width=640):
     h, w, _ = img.shape
@@ -233,11 +216,13 @@ if uploaded_files:
 
     total = len(uploaded_files)
     fresh = rotten = high = 0
+    batch = []
 
     for f in uploaded_files:
         img = np.array(Image.open(f).convert("RGB"))
-        x = cv2.resize(img, (224,224)) / 255.0
+        x = cv2.resize(img, (224,224)).astype("float32") / 255.0
         p = float(model.predict(np.expand_dims(x,0), verbose=0)[0][0]) * 100
+
         fresh += p < 50
         rotten += p >= 50
         high += p >= 70
@@ -250,8 +235,6 @@ if uploaded_files:
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    batch = []
-
     for f in uploaded_files:
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -259,42 +242,30 @@ if uploaded_files:
         img = np.array(Image.open(f).convert("RGB"))
         processed = cv2.GaussianBlur(img,(5,5),0) if use_gaussian else img
 
-        processed = resize_for_display(processed)
-
-        processed = draw_yolo(processed) if use_yolo else processed
-
-
-        col1,col2 = st.columns([1.1,1])
+        col1, col2 = st.columns([1.1,1])
 
         with col1:
             st.image(img, "Original Image", use_container_width=True)
             st.image(processed, "Processed Image")
 
         with col2:
-            x = cv2.resize(processed,(224,224)) / 255.0
+            x = cv2.resize(processed,(224,224)).astype("float32") / 255.0
             p = float(model.predict(np.expand_dims(x,0), verbose=0)[0][0]) * 100
-            progress = float(max(p,100-p)) / 100
-
-            st.subheader("🧠 AI Analysis Report")
-            st.metric("Freshness (%)", f"{100-p:.2f}")
-            st.metric("Rotten Probability (%)", f"{p:.2f}")
-            st.progress(progress)
 
             shelf = estimate_shelf_life(p)
             risk = "High" if p>=70 else "Medium" if p>=40 else "Low"
             badge = "badge-high" if risk=="High" else "badge-mid" if risk=="Medium" else "badge-low"
 
+            st.metric("Freshness (%)", f"{100-p:.2f}")
+            st.metric("Rotten (%)", f"{p:.2f}")
             st.markdown(f"**Risk Level:** <span class='{badge}'>{risk}</span>", unsafe_allow_html=True)
-            st.markdown(f"**Estimated Shelf Life:** {shelf}")
+            st.markdown(f"**Shelf Life:** {shelf}")
 
-            color,title,message = ai_interpretation_message(p)
-
-            st.markdown(f"""
-            <div style="background:rgba(255,255,255,0.04);border-left:6px solid {color};
-            padding:16px;border-radius:12px;margin-top:12px;">
-            <b style="color:{color};">{title}</b><br>{message}
-            </div>
-            """, unsafe_allow_html=True)
+            color,title,msg = ai_interpretation_message(p)
+            st.markdown(
+                f"<div style='border-left:6px solid {color};padding:12px'>{title}<br>{msg}</div>",
+                unsafe_allow_html=True
+            )
 
         if show_gradcam:
             hm = make_gradcam(np.expand_dims(x,0), model, get_last_conv_layer(model))
@@ -305,15 +276,15 @@ if uploaded_files:
             "Image": f.name,
             "Fresh %": round(100-p,2),
             "Rotten %": round(p,2),
-            "Risk": risk,
-            "Shelf Life": shelf
+            "Risk": risk
         }
 
-        st.session_state.history.append(record)
         batch.append(record)
+        st.session_state.history.append(record)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+    st.dataframe(pd.DataFrame(batch), use_container_width=True)
 
     # ================= BATCH REPORT =================
     st.markdown('<div class="section-title">📦 Batch Inspection Report</div>', unsafe_allow_html=True)
