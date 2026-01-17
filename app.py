@@ -152,7 +152,7 @@ def make_gradcam(x, model, layer):
     )
     with tf.GradientTape() as tape:
         conv, pred = grad_model(x)
-        loss = pred[:, 0]
+        loss = tf.squeeze(pred) 
     grads = tape.gradient(loss, conv)
     pooled = tf.reduce_mean(grads, axis=(0,1,2))
     conv = conv[0]
@@ -352,3 +352,4 @@ if st.session_state.history:
     if c2.button("🗑 Clear History"):
         st.session_state.history = []
         st.rerun()
+
