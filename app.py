@@ -175,6 +175,14 @@ def draw_yolo(img):
             cv2.rectangle(out, (x1, y1), (x2, y2), (34,197,94), 2)
     return out
 
+def resize_for_display(img, max_width=640):
+    h, w, _ = img.shape
+    if w > max_width:
+        scale = max_width / w
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+    return img
+
+
 def ai_interpretation_message(p):
     if p < 10:
         return ("#22c55e","🟢 Excellent Freshness",
@@ -250,13 +258,17 @@ if uploaded_files:
 
         img = np.array(Image.open(f).convert("RGB"))
         processed = cv2.GaussianBlur(img,(5,5),0) if use_gaussian else img
+
+        processed = resize_for_display(processed)
+
         processed = draw_yolo(processed) if use_yolo else processed
+
 
         col1,col2 = st.columns([1.1,1])
 
         with col1:
             st.image(img, "Original Image", use_container_width=True)
-            st.image(processed, "Processed Image", use_container_width=True)
+            st.image(processed, "Processed Image")
 
         with col2:
             x = cv2.resize(processed,(224,224)) / 255.0
@@ -352,4 +364,3 @@ if st.session_state.history:
     if c2.button("🗑 Clear History"):
         st.session_state.history = []
         st.rerun()
-
